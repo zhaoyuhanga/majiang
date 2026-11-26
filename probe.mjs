@@ -1,0 +1,18 @@
+import puppeteer from 'puppeteer-core';
+const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+console.log('launching');
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--disable-gpu'] });
+console.log('launched');
+const page = await browser.newPage();
+await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+console.log('page created');
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+page.on('console', (m) => console.log('CONSOLE', m.type(), m.text()));
+await page.goto('http://127.0.0.1:3001/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+console.log('goto ok', await page.title());
+await page.waitForSelector('#createBtn', { timeout: 5000 });
+console.log('create btn ok');
+await page.screenshot({ path: 'shot-probe.png' });
+console.log('shot ok');
+await browser.close();
+console.log('closed');
