@@ -105,12 +105,14 @@ function beep(kind) {
 }
 
 function toast(msg, kind = '') {
+  const root = $('#toastRoot');
+  root.innerHTML = '';
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.textContent = msg;
-  $('#toastRoot').appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 2200);
-  setTimeout(() => el.remove(), 2600);
+  root.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 1300);
+  setTimeout(() => el.remove(), 1700);
 }
 
 // ---------------- 网络 ----------------
@@ -172,7 +174,6 @@ function applySnapshot(snap) {
   const myTurnNow = snap.game?.turn === snap.mySeat && snap.game?.phase === 'discard' && snap.state === 'playing';
   const myTurnBefore = prevTurn === snap.mySeat && prevPhase === 'discard';
   if (myTurnNow && !myTurnBefore) {
-    toast('轮到你出牌');
     beep('turn');
   }
   if (prev?.chat && snap.chat && snap.chat.length > prev.chat.length && !state.chatOpen) {
@@ -497,8 +498,7 @@ function renderMyBar(snap) {
   const g = snap.game;
   const mySeat = snap.mySeat;
   if (!g || mySeat < 0) {
-    if (snap.state === 'playing') bar.innerHTML = '<span class="m-tag">观战中</span><span style="color:#93ac9e">本局结束后可入座</span>';
-    else bar.innerHTML = '';
+    bar.innerHTML = '';
     return;
   }
   const p = g.players[mySeat];
