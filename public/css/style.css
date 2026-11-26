@@ -503,8 +503,8 @@ body { overflow: hidden; }
   .pill { white-space: nowrap; font-size: 10px; padding: 2px 6px; }
   #ruleNameLabel { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .icon-btn { min-width: 32px; height: 30px; padding: 0 7px; font-size: 12px; }
-  #bottomDock { padding-bottom: calc(12px + var(--safe-b)); }
-  .hand-area { min-height: calc(var(--tile-h) + 18px); padding: 6px 0 10px; }
+  #bottomDock { padding-bottom: calc(20px + var(--safe-b)); }
+  .hand-area { min-height: calc(var(--tile-h) + 18px); padding: 6px 0 14px; }
   .my-bar { font-size: 11px; gap: 6px; }
 }
 @media (max-width: 520px) {
