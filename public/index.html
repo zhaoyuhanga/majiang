@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="description" content="哈尔滨麻将、双鸭山麻将在线联机，开房即玩，支持人机补位与断线重连。">
 <meta name="theme-color" content="#0a2c22">
 <title>麻将联机 · 哈尔滨 / 双鸭山</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f4a37'/%3E%3Crect x='12' y='10' width='40' height='44' rx='6' fill='%23f6f1e2'/%3E%3Ctext x='32' y='42' font-size='28' text-anchor='middle' fill='%23b3352c'%3E中%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/style.css?v=1.6.0">
 <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
@@ -24,7 +25,7 @@
       </header>
 
       <div class="home-grid">
-        <div class="card">
+        <div class="card create-card">
           <div class="card-title">创建房间</div>
           <label class="field">
             <span>昵称</span>
@@ -34,50 +35,9 @@
             <span>玩法</span>
             <div class="rule-picker" id="rulePicker"></div>
           </div>
-          <div class="opt-row">
-            <label class="field small">
-              <span>局数</span>
-              <select id="optRounds">
-                <option value="4">4 局</option>
-                <option value="8" selected>8 局</option>
-                <option value="16">16 局</option>
-              </select>
-            </label>
-            <label class="field small">
-              <span>出牌时间</span>
-              <select id="optTurn">
-                <option value="12">12 秒</option>
-                <option value="20" selected>20 秒</option>
-                <option value="30">30 秒</option>
-              </select>
-            </label>
-            <label class="field small">
-              <span>底分</span>
-              <select id="optBase">
-                <option value="1" selected>1</option>
-                <option value="2">2</option>
-                <option value="5">5</option>
-              </select>
-            </label>
-          </div>
+          <div class="play-summary" id="playSummary"></div>
           <label class="check"><input type="checkbox" id="optBots" checked> 人数不足自动补人机</label>
-          <details class="advanced">
-            <summary>高级规则</summary>
-            <div class="adv-grid">
-              <label class="check"><input type="checkbox" id="optChi" checked> 允许吃牌</label>
-              <label class="check"><input type="checkbox" id="optMultiHu"> 一炮多响</label>
-              <label class="field small">
-                <span>封顶</span>
-                <select id="optCap">
-                  <option value="16">16</option>
-                  <option value="36" selected>36</option>
-                  <option value="64">64</option>
-                  <option value="128">128</option>
-                </select>
-              </label>
-            </div>
-          </details>
-          <button id="createBtn" class="btn primary big">创建房间</button>
+          <button id="createBtn" class="btn primary big">配置玩法并创建</button>
         </div>
 
         <div class="card">
@@ -94,14 +54,14 @@
         </div>
       </div>
 
-      <footer class="home-foot">服务端权威判定 · 断线可重连 · 人机补位 · 手机横竖屏均可</footer>
+      <footer class="home-foot">服务端权威判定 · 断线可重连 · 人机补位 · 手机横竖屏均可 <button id="adminBtn" class="version admin-entry" type="button" title="版本信息">v1.6.0</button></footer>
     </div>
   </section>
 
   <!-- ============ 房间 ============ -->
   <section id="room" class="screen hidden">
     <header class="topbar">
-      <button id="homeBtn" class="icon-btn" title="返回首页">‹</button>
+      <button id="homeBtn" class="icon-btn" title="退出房间">退出</button>
       <div class="room-title">
         <span id="roomCodeLabel" class="room-code">-----</span>
         <span id="ruleNameLabel" class="pill">--</span>
@@ -109,9 +69,11 @@
       </div>
       <div class="spacer"></div>
       <button id="rulesBtn" class="icon-btn">规则</button>
+      <button id="roomSettingsBtn" class="icon-btn hidden">设置</button>
       <button id="inviteBtn" class="icon-btn">邀请</button>
       <button id="chatBtn" class="icon-btn">聊天<span id="chatDot" class="dot hidden"></span></button>
-      <button id="soundBtn" class="icon-btn" title="音效">🔊</button>
+      <button id="soundBtn" class="icon-btn" title="音效">音效</button>
+      <span id="networkState" class="network-state" role="status"></span>
     </header>
 
     <div id="tableWrap">
@@ -126,6 +88,7 @@
             <div id="baoInfo" class="bao-info"></div>
           </div>
           <div id="centerMsg" class="center-msg"></div>
+          <div id="lastPlay" class="last-play" aria-live="polite"></div>
           <div id="timerRing" class="timer-ring hidden"><span></span></div>
         </div>
       </div>
@@ -148,6 +111,7 @@
         <div class="wait-actions">
           <button id="readyBtn" class="btn">准备</button>
           <button id="fillBotsBtn" class="btn ghost">补满人机</button>
+          <button id="dissolveBtn" class="btn danger-btn hidden">解散房间</button>
           <button id="startBtn" class="btn primary">开始游戏</button>
         </div>
         <div class="wait-tip" id="waitTip"></div>
@@ -170,9 +134,10 @@
   </section>
 </div>
 
+<svg id="tileSprite" class="tile-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
 <div id="modalRoot"></div>
-<div id="toastRoot" class="toast-root"></div>
+<div id="toastRoot" class="toast-root" role="status" aria-live="polite"></div>
 
-<script type="module" src="/js/app.js"></script>
+<script type="module" src="/js/app.js?v=1.6.0"></script>
 </body>
 </html>

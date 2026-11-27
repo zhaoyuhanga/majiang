@@ -1,19 +1,22 @@
 {
   "name": "majiang-online",
-  "version": "1.1.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
-  "description": "联机麻将：哈尔滨麻将 / 双鸭山麻将（规则可配置）",
+  "description": "联机麻将：哈尔滨麻将 / 双鸭山麻将（牌面与交互升级版）",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.js\"",
+    "test:ui": "node ui-test.mjs",
+    "check": "node --check public/js/app.js && node --check public/js/action-state.js && node --check server/index.js && node --check server/game.js && node --check server/rooms.js && node --check server/users.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
   },

@@ -58,7 +58,8 @@ function chooseDiscard(round, seat) {
     rest.splice(rest.indexOf(tile), 1);
     const sh = shantenOf(rest, meldCount, rules);
     let keep = 0;
-    for (const t of distinct(rest)) keep += tileKeepValue(t, countsOf(rest)) * (countsOf(rest)[t] || 1);
+    const restCounts = countsOf(rest);
+    for (const t of distinct(rest)) keep += tileKeepValue(t, restCounts) * restCounts[t];
     const score = -sh * 1000 + keep * 0.6;
     if (!best || score > best.score) best = { tile, score, sh };
   }

@@ -15,10 +15,17 @@ function item(name, value, note) {
 export function scoreHarbin(ctx) {
   const { rules, analysis, zimo, winnerSeat, discarderSeat, discarderTing } = ctx;
   const cfg = rules.scoring;
+  const ro = rules.ruleOptions || {};
   const items = [];
+  const multiply = (name, value) => {
+    fan *= value;
+    items.push(item(name, '', '×' + value));
+  };
   let fan;
   let label;
-  if (analysis.useBao && analysis.kadan) {
+  const edgeSanQi = analysis.edgeWait && analysis.effectiveTile >= 11 && analysis.effectiveTile <= 39 && [3, 7].includes(analysis.effectiveTile % 10);
+  const kadan = analysis.kanWait || ((ro.sanQiJia || ro.danDiaoJia) && analysis.singleWait) || (ro.sanQiJia && edgeSanQi);
+  if (analysis.useBao && kadan) {
     fan = cfg.baoZhongBao;
     label = '宝中宝';
     items.push(item('宝中宝', fan));
@@ -26,11 +33,10 @@ export function scoreHarbin(ctx) {
     if (analysis.useBao) { fan = cfg.mobao; label = '摸宝'; items.push(item('摸宝', cfg.mobao)); }
     else if (zimo) { fan = cfg.zimo; label = '自摸'; items.push(item('自摸', cfg.zimo)); }
     else { fan = cfg.pinghu; label = '平胡'; items.push(item('平胡', cfg.pinghu)); }
-    if (analysis.kadan) {
-      fan *= cfg.kadanMultiplier;
-      items.push(item('卡当', '', '×' + cfg.kadanMultiplier));
-    }
+    if (kadan) multiply('卡当', cfg.kadanMultiplier);
   }
+  if (ro.zhanLiLiTing && analysis.melds?.length === 0) multiply('站立立听', 3);
+  if (cfg.sceneMultiplier > 1) multiply('场次', cfg.sceneMultiplier);
   const capped = Math.min(fan, cfg.cap);
   if (capped !== fan) items.push(item('封顶', cfg.cap));
 
@@ -43,11 +49,11 @@ export function scoreHarbin(ctx) {
     }
   } else {
     const payer = discarderSeat;
-    const bao = cfg.dianpaoBaoSanjia && discarderTing === false;
+    const bao = cfg.dianpaoBaoSanjia && (discarderTing === false || (cfg.tingShooterAlwaysBao && ctx.flags?.tingShooter));
     const amount = bao ? capped * 3 : capped;
     deltas[payer] -= amount;
     deltas[winnerSeat] += amount;
-    if (bao) items.push(item('包三家', '', '放炮未听，付三家'));
+    if (bao) items.push(item('包三家', '', '放炮者付三家'));
   }
   return { label, total: capped, items, deltas, zimo };
 }
@@ -79,7 +85,7 @@ export function scoreShuangyashan(ctx) {
   if (flags.gangShang) add('杠上开花', 'gangshang');
   if (flags.liulei) add('流泪', 'liulei');
   if (flags.haidi) add('海底捞月', 'haidi');
-  if (analysis.concealed === 1) add('手把一', 'shoubaiyi');
+  if (analysis.concealed === 2 && analysis.melds?.length === 3) add('手把一', 'shoubaiyi');
   if (analysis.pureSuit) add('清一色', 'qingyise');
   if (isDealer) add('庄家', 'zhuangjia');
 

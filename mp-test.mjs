@@ -38,6 +38,9 @@ const bSat = await B.evaluate(() => {
 });
 log('B sat', bSat);
 await new Promise((r) => setTimeout(r, 800));
+await B.waitForFunction(() => window.__snap?.mySeat >= 0, { timeout: 5000 });
+await B.evaluate(() => document.querySelector('#readyBtn')?.click());
+await A.waitForFunction(() => window.__snap?.seats[1]?.ready === true, { timeout: 5000 });
 for (let i = 0; i < 2; i++) {
   await A.evaluate(() => document.querySelector('#waitSeats [data-bot]')?.click());
   await new Promise((r) => setTimeout(r, 350));
@@ -45,14 +48,21 @@ for (let i = 0; i < 2; i++) {
 log('bots', await A.evaluate(() => window.__snap.seats.map((s) => s && s.name)));
 await A.screenshot({ path: 'shot-mp-wait.png' });
 await A.evaluate(() => document.querySelector('#startBtn').click());
-await new Promise((r) => setTimeout(r, 2500));
+await A.waitForFunction(() => window.__snap?.state === 'playing', { timeout: 8000 });
+await B.waitForFunction(() => window.__snap?.state === 'playing', { timeout: 8000 });
+await new Promise((r) => setTimeout(r, 1200));
 await A.screenshot({ path: 'shot-mp-desktop.png' });
 await B.screenshot({ path: 'shot-mobile-table.png' });
-const bState = await B.evaluate(() => ({ seat: window.__snap.mySeat, state: window.__snap.state, hand: window.__snap.game?.myHand?.length, name: window.__snap.seats[window.__snap.mySeat]?.name }));
+const bState = await B.evaluate(() => ({ seat: window.__snap.mySeat, state: window.__snap.state, hand: window.__snap.game?.myHand?.length, name: window.__snap.seats[window.__snap.mySeat]?.name, bot: window.__snap.game?.players[window.__snap.mySeat]?.bot, connected: window.__snap.game?.players[window.__snap.mySeat]?.connected }));
 log('B state', bState);
+if (bState.state !== 'playing' || bState.bot || !bState.connected || bState.hand < 13) throw new Error('移动端玩家未正确进入对局');
+const mobileMetrics = await B.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, lastRight: document.querySelector('#handArea .tile:last-child')?.getBoundingClientRect().right ?? 0 }));
+log('mobile metrics', mobileMetrics);
+if (mobileMetrics.scrollWidth > mobileMetrics.width + 1 || mobileMetrics.lastRight > mobileMetrics.width + 1) throw new Error('移动端手牌布局溢出');
 
 await B.setViewport({ width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-await new Promise((r) => setTimeout(r, 900));
+await new Promise((r) => setTimeout(r, 500));
 await B.screenshot({ path: 'shot-mobile-landscape.png' });
 log('done errs', errs);
 await browser.close();
+if (errs.length) throw new Error(errs.join('\n'));

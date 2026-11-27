@@ -39,3 +39,14 @@ for (let i = 0; i < 20; i++) {
 }
 t1 = performance.now();
 console.log('20 次机器人出牌决策:', (t1 - t0).toFixed(1), 'ms, 平均', ((t1 - t0) / 20).toFixed(1), 'ms');
+
+t0 = performance.now();
+for (let i = 0; i < 300; i++) {
+  round.players[0].hand = randomHand(rules, 11);
+  round.players[0].drawn = round.players[0].hand.at(-1);
+  round.players[0].melds = [{ type: 'chi', tiles: [31, 32, 33], from: 1 }];
+  round.players[0].ting = false;
+  round.optionsFor(0);
+}
+t1 = performance.now();
+console.log('300 次报听提示:', (t1 - t0).toFixed(1), 'ms, 平均', ((t1 - t0) / 300).toFixed(2), 'ms');

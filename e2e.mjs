@@ -7,6 +7,7 @@ const socket = io(BASE, { transports: ['websocket'], timeout: 10000 });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 let states = 0, actions = 0, started = false, done = false;
+const requestedSeats = new Set();
 
 function finish(code) {
   if (done) return;
@@ -18,7 +19,7 @@ function finish(code) {
 
 socket.on('connect', () => {
   log('connected', socket.id, 'transport=', socket.io.engine.transport.name);
-  socket.emit('hello', { clientId: cid, name: 'E2E测试' });
+  socket.emit('hello', { clientId: cid, authToken: 'e2etoken'.repeat(4) + cid, name: 'E2E测试' });
 });
 socket.on('connect_error', (e) => log('connect_error', e.message));
 socket.on('error:msg', (e) => log('server error:', e.message));
@@ -36,8 +37,11 @@ socket.on('room:state', (snap) => {
   if (snap.state === 'waiting') {
     const filled = snap.seats.filter(Boolean).length;
     if (filled < 4) {
-      const empty = snap.seats.findIndex((s) => !s);
-      if (empty >= 0) socket.emit('room:addBot', { seat: empty });
+      const empty = snap.seats.findIndex((s, seat) => !s && !requestedSeats.has(seat));
+      if (empty >= 0) {
+        requestedSeats.add(empty);
+        socket.emit('room:addBot', { seat: empty });
+      }
       return;
     }
     if (!started) { started = true; log('starting'); socket.emit('room:start'); }
@@ -54,7 +58,7 @@ socket.on('room:state', (snap) => {
   if (snap.state !== 'playing' || !o) return;
   if (o.phase === 'discard') {
     if (o.hu) { socket.emit('game:act', { action: { type: 'hu' } }); actions++; return; }
-    if (o.ting) { socket.emit('game:act', { action: { type: 'ting', tile: o.discards?.[0] } }); actions++; return; }
+    if (o.ting) { socket.emit('game:act', { action: { type: 'ting', tile: Number(Object.keys(o.tingDiscards || {})[0]) } }); actions++; return; }
     const tile = o.discards?.[0];
     if (tile != null) { socket.emit('game:act', { action: { type: 'discard', tile } }); actions++; }
   } else if (o.phase === 'claim') {

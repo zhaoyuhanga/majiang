@@ -8,7 +8,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function client(cid, name) {
   const socket = io(BASE, { transports: ['websocket'], reconnection: false });
   const c = { socket, cid, name, snap: null };
-  socket.on('connect', () => socket.emit('hello', { clientId: cid, name }));
+  socket.on('connect', () => socket.emit('hello', { clientId: cid, authToken: 'prodtoken'.repeat(4) + cid, name }));
   socket.on('room:state', (s) => { c.snap = s; });
   socket.on('error:msg', (e) => { c.lastError = e.message; log(name, 'ERR', e.message); });
   return c;
@@ -32,6 +32,8 @@ for (let i = 0; i < 2; i++) {
   await wait(350);
 }
 log('seats full:', A.snap.seats.filter(Boolean).length);
+B.socket.emit('room:ready', { ready: true });
+await wait(350);
 A.socket.emit('room:start');
 await wait(1500);
 log('state', A.snap.state, 'round', A.snap.roundNo, 'B hand', B.snap.game?.myHand?.length, 'B seat', B.snap.mySeat);

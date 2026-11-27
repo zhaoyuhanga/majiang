@@ -25,6 +25,7 @@ export class Round {
     this.dealer = dealer;
     this.startScores = scores.slice();
     this.deltas = emptyDeltas();
+    this.pendingGangDeltas = emptyDeltas();
     this.players = seats.map((s, i) => ({
       seat: i,
       id: s.id,
@@ -36,8 +37,12 @@ export class Round {
       discards: [],
       ting: false,
       tingWaits: [],
+      baoRevealed: false,
       drawn: null,
       auto: false,
+      canSwapDraw: !!s.canSwapDraw,
+      drawSwapOpen: false,
+      drawSwapUsed: false,
     }));
     this.wall = [];
     this.bao = null;
@@ -49,11 +54,13 @@ export class Round {
     this.botAt = 0;
     this.claimBotAt = {};
     this.autoAction = null;
+    this.tingHint = null;
     this.seq = 0;
     this.eventSeq = 0;
     this.events = [];
     this.lastDiscard = null;
     this.flags = {};
+    this.drawSerial = 0;
     this.lastGangDiscard = false; // 流泪判定：杠后打出的牌
     this.start();
   }
@@ -90,6 +97,11 @@ export class Round {
 
   beginTurn(seat, { gangShang = false, first = false } = {}) {
     const p = this.players[seat];
+    this.drawSerial++;
+    p.drawSwapOpen = false;
+    p.drawSwapUsed = false;
+    if (p.ting) p.baoRevealed = true;
+    this.tingHint = null;
     this.turn = seat;
     this.pending = null;
     this.flags = {};
@@ -108,7 +120,65 @@ export class Round {
     if (this.wall.length === 0) this.flags.haidi = true;
     this.emit('draw', { seat, stone: p.ting ? tile : undefined, wall: this.wall.length });
     this.touch();
+    if (this.maybeRuleAutoWin(seat)) return;
     this.maybeAutoTingPlay(seat);
+  }
+
+  maybeRuleAutoWin(seat) {
+    const p = this.players[seat];
+    if (!p.ting || p.drawn == null) return false;
+    const ro = this.rules.ruleOptions || {};
+    if (ro.louHu && this.bao && p.drawn === this.bao.rank && p.tingWaits.includes(p.drawn)) {
+      this.settleRuleWin(seat, '漏胡', this.rules.scoring.mobao, '听牌后摸到所听宝牌');
+      return true;
+    }
+    if (ro.hongZhongManTianFei && p.drawn === 45) {
+      this.settleRuleWin(seat, '红中满天飞', 2, '听牌后摸到红中');
+      return true;
+    }
+    if (ro.guaFeng) {
+      const tile = p.drawn;
+      const fromPeng = p.melds.some((m) => m.type === 'peng' && m.tiles[0] === tile);
+      const concealed = countsOf(p.hand)[tile] === 4;
+      if (fromPeng || concealed) {
+        const value = (fromPeng ? this.rules.scoring.gangScore.bu : this.rules.scoring.gangScore.an) || 1;
+        this.settleRuleWin(seat, '刮风', value, fromPeng ? '听牌后摸到明刻第四张' : '听牌后摸到暗刻第四张');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  settleRuleWin(seat, label, fan, note) {
+    const p = this.players[seat];
+    this.flushGangDeltas();
+    const scene = this.rules.scoring.sceneMultiplier || 1;
+    const totalFan = Math.min(fan * scene, this.rules.scoring.cap);
+    const amount = totalFan * this.cfg.baseScore;
+    const items = [{ name: label, value: totalFan, note }];
+    if (scene > 1) items.push({ name: '场次', value: '', note: `×${scene}` });
+    for (let i = 0; i < 4; i++) {
+      if (i === seat) continue;
+      this.deltas[i] -= amount;
+      this.deltas[seat] += amount;
+    }
+    this.phase = 'ended';
+    this.pending = null;
+    this.autoAction = null;
+    this.result = {
+      type: 'win',
+      winners: [{
+        seat, name: p.name, label, fan: totalFan,
+        total: amount, items,
+        winTile: p.drawn, zimo: true,
+      }],
+      deltas: this.deltas.slice(),
+      hands: this.players.map((pl) => sortTiles(pl.hand)),
+      melds: this.players.map((pl) => pl.melds),
+      bao: this.bao ? { rank: this.bao.rank, indicator: this.bao.indicator } : null,
+    };
+    this.emit('win', { winners: [seat], zimo: true, rule: label });
+    this.touch();
   }
 
   maybeAutoTingPlay(seat) {
@@ -119,7 +189,7 @@ export class Round {
     const at = Date.now() + 700;
     if (canWin && this.rules.autoHuOnTing) {
       this.autoAction = { at, fn: () => this.act(seat, { type: 'hu' }) };
-    } else {
+    } else if (!this.rules.allowDiscardAfterTing) {
       this.autoAction = { at, fn: () => this.autoDiscardForTing(seat) };
     }
   }
@@ -167,6 +237,12 @@ export class Round {
         return this.doAddGang(seat, action.tile);
       case 'ting':
         return this.declareTing(seat, action.tile);
+      case 'tingHint':
+        return this.requestTingHint(seat);
+      case 'revealDraw':
+        return this.revealDraw(seat);
+      case 'swapDraw':
+        return this.swapDraw(seat, action.tile);
       case 'pass':
         throw new Error('现在不能过');
       default:
@@ -174,16 +250,68 @@ export class Round {
     }
   }
 
+  // ---------- 特殊摸牌 ----------
+  canSwapDraw(seat) {
+    const p = this.players[seat];
+    return !!p && (p.canSwapDraw || (
+      this.rules.id === 'shuangyashan' &&
+      this.rules.ruleOptions?.shouBaYiSwap &&
+      p.melds.length === 3 &&
+      p.hand.length === 3 &&
+      p.drawn != null
+    ));
+  }
+
+  drawSwapPlayer(seat) {
+    const p = this.players[seat];
+    if (!this.canSwapDraw(seat)) throw new Error('你没有摸牌换牌权限');
+    if (this.phase !== 'discard' || this.turn !== seat || p.drawn == null) throw new Error('只能在本次摸牌时换牌');
+    if (p.ting) throw new Error('报听后不能换牌');
+    if (p.drawSwapUsed) throw new Error('本次摸牌已经换过牌');
+    if (!this.wall.length) throw new Error('牌墙已空');
+    return p;
+  }
+
+  revealDraw(seat) {
+    const p = this.drawSwapPlayer(seat);
+    p.drawSwapOpen = true;
+    const wallChoices = this.revealDrawChoices();
+    this.touch();
+    return { wallChoices };
+  }
+
+  swapDraw(seat, tile) {
+    const p = this.drawSwapPlayer(seat);
+    if (!p.drawSwapOpen) throw new Error('请先双击剩余牌数查看可换牌');
+    if (!Number.isInteger(tile) || tile === p.drawn) throw new Error('请选择一张不同的牌');
+    const wallIndex = this.wall.indexOf(tile);
+    const handIndex = p.hand.indexOf(p.drawn);
+    if (wallIndex < 0 || handIndex < 0) throw new Error('这张牌不在牌墙中');
+    this.wall[wallIndex] = p.drawn;
+    p.hand[handIndex] = tile;
+    p.drawn = tile;
+    p.drawSwapOpen = false;
+    p.drawSwapUsed = true;
+    this.tingHint = null;
+    this.autoAction = null;
+    this.drawSerial++;
+    this.touch();
+    return { swapped: true };
+  }
+
   // ---------- 打牌 ----------
-  discard(seat, tile) {
+  discard(seat, tile, { declaringTing = false } = {}) {
     const p = this.players[seat];
     if (this.phase !== 'discard' || this.turn !== seat) throw new Error('还没轮到你');
     if (!p.hand.includes(tile)) throw new Error('你没有这张牌');
-    if (p.ting && p.drawn != null && tile !== p.drawn) throw new Error('报听后只能打出刚摸的牌');
+    if (p.ting && !this.rules.allowDiscardAfterTing && !declaringTing && p.drawn != null && tile !== p.drawn) throw new Error('报听后只能打出刚摸的牌');
     const idx = p.hand.indexOf(tile);
     p.hand.splice(idx, 1);
+    if (declaringTing) p.ting = true;
     const wasDrawn = p.drawn;
+    p.drawSwapOpen = false;
     p.drawn = null;
+    this.tingHint = null;
     p.discards.push(tile);
     this.lastDiscard = { seat, tile, at: Date.now() };
     this.flags.haidi = this.wall.length === 0;
@@ -192,7 +320,7 @@ export class Round {
     this.maybeSwapBao();
     const fromGang = this.lastGangDiscard;
     this.lastGangDiscard = false;
-    this.openClaims(tile, seat, { fromGang });
+    this.openClaims(tile, seat, { fromGang, tingShooter: declaringTing });
   }
 
   // ---------- 吃碰杠胡的响应 ----------
@@ -222,7 +350,7 @@ export class Round {
     return out;
   }
 
-  openClaims(tile, fromSeat, { qiangGang = false, fromGang = false } = {}) {
+  openClaims(tile, fromSeat, { qiangGang = false, fromGang = false, tingShooter = false } = {}) {
     const options = this.computeClaims(tile, fromSeat, { qiangGang });
     const seats = Object.keys(options).map(Number);
     if (!seats.length) {
@@ -236,7 +364,7 @@ export class Round {
     this.phase = 'claim';
     this.pending = {
       tile, from: fromSeat, options, responses: {},
-      qiangGang, fromGang,
+      qiangGang, fromGang, tingShooter,
       deadline: Date.now() + this.cfg.claimSeconds * 1000,
     };
     this.deadline = this.pending.deadline;
@@ -343,6 +471,7 @@ export class Round {
     this.turn = seat;
     this.phase = 'discard';
     p.drawn = null;
+    this.tingHint = null;
     this.deadline = Date.now() + this.cfg.turnSeconds * 1000;
     this.botAt = Date.now() + this.cfg.botThinkingMs;
     this.lastGangDiscard = false;
@@ -361,6 +490,7 @@ export class Round {
     this.turn = seat;
     this.phase = 'discard';
     p.drawn = null;
+    this.tingHint = null;
     this.deadline = Date.now() + this.cfg.turnSeconds * 1000;
     this.botAt = Date.now() + this.cfg.botThinkingMs;
     this.lastGangDiscard = false;
@@ -383,8 +513,19 @@ export class Round {
   applyGangScore(seat, type, fromSeat) {
     const { deltas, value, items } = gangDeltas(this.rules, seat, type, fromSeat);
     if (!value) return;
-    for (let i = 0; i < 4; i++) this.deltas[i] += deltas[i] * this.cfg.baseScore;
-    this.emit('gang_score', { seat, type, value, items });
+    for (let i = 0; i < 4; i++) {
+      const amount = deltas[i] * this.cfg.baseScore;
+      if (this.rules.scoring.gangImmediate === false) this.pendingGangDeltas[i] += amount;
+      else this.deltas[i] += amount;
+    }
+    this.emit('gang_score', { seat, type, value, items, immediate: this.rules.scoring.gangImmediate !== false });
+  }
+
+  flushGangDeltas() {
+    for (let i = 0; i < 4; i++) {
+      this.deltas[i] += this.pendingGangDeltas[i];
+      this.pendingGangDeltas[i] = 0;
+    }
   }
 
   doConcealedGang(seat, tile) {
@@ -475,10 +616,10 @@ export class Round {
     rest.splice(rest.indexOf(tile), 1);
     const info = getTingInfo(rest, p.melds, this.rules);
     if (!info.ting) throw new Error('未听牌，不能报听');
-    // 先打牌再锁定手牌，避免「报听后只能打摸牌」限制误伤报听动作本身
-    this.discard(seat, tile);
-    p.ting = true;
+    // 报听状态先落盘，确保同步触发的点炮结算按听牌者计分。
+    this.discard(seat, tile, { declaringTing: true });
     p.tingWaits = info.waits;
+    if (this.rules.ruleOptions?.kuaiBao) p.baoRevealed = true;
     this.emit('ting', { seat, waits: info.waits });
     this.touch();
   }
@@ -486,6 +627,7 @@ export class Round {
   // ---------- 结算 ----------
   settleMultiWin(winners, pending) {
     const results = [];
+    this.flushGangDeltas();
     for (const w of winners) {
       const p = this.players[w];
       const a = analyzeWin({
@@ -495,17 +637,17 @@ export class Round {
       if (!a.ok) continue;
       const score = scoreRound({
         rules: this.rules, analysis: { ...a, melds: p.melds },
-        zimo: pending.qiangGang, winnerSeat: w,
+        zimo: false, winnerSeat: w,
         discarderSeat: pending.from,
         discarderTing: this.players[pending.from].ting,
-        flags: { liulei: pending.fromGang, haidi: this.wall.length === 0 },
+        flags: { liulei: pending.fromGang, haidi: this.wall.length === 0, tingShooter: pending.tingShooter },
         isDealer: w === this.dealer,
       });
       for (let i = 0; i < 4; i++) this.deltas[i] += score.deltas[i] * this.cfg.baseScore;
       results.push({
         seat: w, name: p.name, label: score.label, fan: score.total,
         total: score.deltas[w] * this.cfg.baseScore,
-        items: score.items, winTile: pending.tile, zimo: pending.qiangGang,
+        items: score.items, winTile: pending.tile, zimo: false,
         discarder: pending.from,
       });
     }
@@ -532,6 +674,7 @@ export class Round {
 
   settleWin({ winnerSeat, winTile, zimo, analysis }) {
     const p = this.players[winnerSeat];
+    this.flushGangDeltas();
     const score = scoreRound({
       rules: this.rules, analysis: { ...analysis, melds: p.melds },
       zimo, winnerSeat,
@@ -564,6 +707,7 @@ export class Round {
   endDraw() {
     this.phase = 'ended';
     this.pending = null;
+    this.flushGangDeltas();
     this.result = {
       type: 'draw',
       winners: [],
@@ -599,6 +743,29 @@ export class Round {
     }
   }
 
+  requestTingHint(seat) {
+    const p = this.players[seat];
+    if (this.phase !== 'discard' || this.turn !== seat || p.drawn == null) throw new Error('只能在摸牌后查询听牌');
+    if (p.ting) throw new Error('已经报听');
+    if (!this.rules.win.requireTing) throw new Error('本规则无需报听');
+    if (this.tingHint) return this.tingHint;
+    const tingDiscards = {};
+    for (const tile of new Set(p.hand)) {
+      const rest = p.hand.slice();
+      rest.splice(rest.indexOf(tile), 1);
+      const info = getTingInfo(rest, p.melds, this.rules);
+      if (info.ting) tingDiscards[tile] = info.waits;
+    }
+    const tingTiles = Object.keys(tingDiscards).map(Number);
+    this.tingHint = {
+      ting: tingTiles.length > 0,
+      tingDiscards,
+      tingWaits: tingDiscards[p.drawn] || (tingTiles.length ? tingDiscards[tingTiles[0]] : []),
+    };
+    this.touch();
+    return this.tingHint;
+  }
+
   // ---------- 查询 ----------
   optionsFor(seat) {
     if (seat < 0 || seat > 3) return null;
@@ -610,7 +777,12 @@ export class Round {
     }
     if (this.phase === 'discard' && this.turn === seat) {
       const p = this.players[seat];
-      const o = { phase: 'discard' };
+      const o = {
+        phase: 'discard',
+        canSwapDraw: this.canSwapDraw(seat) && !p.ting && p.drawn != null,
+        drawSwapUsed: !!p.drawSwapUsed,
+      };
+      if (this.canSwapDraw(seat) && p.drawSwapOpen) o.wallChoices = this.revealDrawChoices();
       const a = this.canSelfWin(seat);
       if (a) o.hu = true;
       if (!p.ting) {
@@ -622,15 +794,28 @@ export class Round {
           if (bugang.length) o.bugang = bugang;
         }
         if (this.rules.win.requireTing && p.drawn != null) {
-          const rest = p.hand.filter((t, i) => i !== p.hand.indexOf(p.drawn));
-          const info = getTingInfo(rest, p.melds, this.rules);
-          if (info.ting) { o.ting = true; o.tingWaits = info.waits; }
+          o.tingHintAvailable = !this.tingHint;
+          o.tingHintChecked = !!this.tingHint;
+          if (this.tingHint?.ting) {
+            o.ting = true;
+            o.tingDiscards = this.tingHint.tingDiscards;
+            o.tingWaits = this.tingHint.tingWaits;
+          }
         }
       }
-      o.discards = p.ting ? [p.drawn] : sortTiles(p.hand);
+      o.discards = p.ting && !this.rules.allowDiscardAfterTing ? [p.drawn] : sortTiles(p.hand);
       return o;
     }
     return null;
+  }
+
+  revealDrawChoices() {
+    const counts = countsOf(this.wall);
+    const choices = {};
+    for (let tile = 11; tile <= 47; tile++) {
+      if (counts[tile]) choices[tile] = counts[tile];
+    }
+    return choices;
   }
 
   // ---------- 快照 ----------
@@ -643,19 +828,19 @@ export class Round {
       dealer: this.dealer,
       phase: this.phase,
       turn: this.turn,
+      drawSerial: this.drawSerial,
       wall: this.wall.length,
       deadline: this.deadline,
       now,
       bao: this.bao
         ? {
-          rank: (p && p.ting) || this.phase === 'ended' || seat < 0 ? this.bao.rank : null,
-          indicator: this.phase === 'ended' || seat < 0 ? this.bao.indicator : undefined,
+          rank: !this.rules.bao.revealToTingOnly || p?.baoRevealed || (this.rules.ruleOptions?.kuaiBao && p?.ting) || this.phase === 'ended' ? this.bao.rank : null,
+          indicator: this.phase === 'ended' ? this.bao.indicator : undefined,
           swaps: this.bao.swaps || 0,
         }
         : null,
       players: this.players.map((pl, i) => ({
         seat: i,
-        id: pl.id,
         name: pl.name,
         bot: pl.bot,
         connected: pl.connected,

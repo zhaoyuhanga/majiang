@@ -1,5 +1,6 @@
 node_modules/
 .deploy/
+data/
 *.tar.gz
 shot-*.png
 *.log

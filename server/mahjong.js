@@ -96,37 +96,79 @@ export function shuffle(arr, rng = Math.random) {
 
 // ---------- 胡牌判定 ----------
 
-// 剩余的牌能否恰好组成 need 副面子
-function canFormMelds(c, need) {
+function canFormGroupMelds(c, start, end, need) {
   if (need === 0) {
-    for (let i = 1; i < 48; i++) if (c[i] > 0) return false;
+    for (let i = start; i <= end; i++) if (c[i] > 0) return false;
     return true;
   }
-  let i = -1;
-  for (let k = 1; k < 48; k++) if (c[k] > 0) { i = k; break; }
-  if (i < 0) return false;
-  const s = suitOf(i), r = rankOf(i);
+  let i = start;
+  while (i <= end && c[i] === 0) i++;
+  if (i > end) return false;
   if (c[i] >= 3) {
     c[i] -= 3;
-    if (canFormMelds(c, need - 1)) { c[i] += 3; return true; }
+    const ok = canFormGroupMelds(c, start, end, need - 1);
     c[i] += 3;
+    if (ok) return true;
   }
-  if (s >= WAN && s <= TIAO && r <= 7 && c[i + 1] > 0 && c[i + 2] > 0) {
+  if (i + 2 <= end && c[i + 1] > 0 && c[i + 2] > 0) {
     c[i]--; c[i + 1]--; c[i + 2]--;
-    if (canFormMelds(c, need - 1)) { c[i]++; c[i + 1]++; c[i + 2]++; return true; }
+    const ok = canFormGroupMelds(c, start, end, need - 1);
     c[i]++; c[i + 1]++; c[i + 2]++;
+    if (ok) return true;
   }
   return false;
 }
 
 function standardWin(c, need) {
-  for (let i = 1; i < 48; i++) {
-    if (c[i] >= 2) {
-      c[i] -= 2;
-      const ok = canFormMelds(c, need);
-      c[i] += 2;
-      if (ok) return true;
+  const groups = [];
+  for (const base of [10, 20, 30]) {
+    let start = -1;
+    let end = -1;
+    let total = 0;
+    for (let rank = 1; rank <= 9; rank++) {
+      const tile = base + rank;
+      if (c[tile] > 4) return false;
+      if (c[tile] === 0) {
+        if (start >= 0) {
+          groups.push({ start, end, total });
+          start = -1;
+          total = 0;
+        }
+        continue;
+      }
+      if (start < 0) start = tile;
+      end = tile;
+      total += c[tile];
     }
+    if (start >= 0) groups.push({ start, end, total });
+  }
+  for (let tile = 41; tile <= 47; tile++) {
+    if (c[tile] > 4) return false;
+    if (c[tile] > 0) groups.push({ start: tile, end: tile, total: c[tile] });
+  }
+
+  let pairGroup = -1;
+  for (let i = 0; i < groups.length; i++) {
+    const remainder = groups[i].total % 3;
+    if (remainder === 1) return false;
+    if (remainder === 2) {
+      if (pairGroup >= 0) return false;
+      pairGroup = i;
+    }
+  }
+  if (pairGroup < 0) return false;
+  const group = groups[pairGroup];
+  for (let pair = group.start; pair <= group.end; pair++) {
+    if (c[pair] < 2) continue;
+    c[pair] -= 2;
+    let ok = true;
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      const meldCount = (g.total - (i === pairGroup ? 2 : 0)) / 3;
+      if (!canFormGroupMelds(c, g.start, g.end, meldCount)) { ok = false; break; }
+    }
+    c[pair] += 2;
+    if (ok) return true;
   }
   return false;
 }
@@ -161,18 +203,22 @@ function thirteenOrphansWin(c) {
  * @param {number} meldCount 已副露副数
  * @param {object} rules
  */
-export function isWinningHand(tiles, meldCount, rules) {
+function isWinningHandCounts(c, meldCount, rules) {
   const win = rules.win || rules;
   const need = 4 - meldCount;
-  if (need < 0 || tiles.length !== need * 3 + 2) return false;
-  if (win.mustOpen && meldCount === 0) return false;
-  const c = countsOf(tiles);
+  if (need < 0 || win.mustOpen && meldCount === 0) return false;
   if (standardWin(c, need)) return true;
   if (need === 4 && !win.mustOpen) {
     if (win.allowSevenPairs && sevenPairsWin(c)) return true;
     if (win.allowThirteenOrphans && thirteenOrphansWin(c)) return true;
   }
   return false;
+}
+
+export function isWinningHand(tiles, meldCount, rules) {
+  const need = 4 - meldCount;
+  if (need < 0 || tiles.length !== need * 3 + 2) return false;
+  return isWinningHandCounts(countsOf(tiles), meldCount, rules);
 }
 
 /** 七对（含豪华七对）判定，用于番型 */
@@ -190,13 +236,16 @@ export function isThirteenOrphans(tiles, meldCount) {
 
 /** 返回所有能胡的牌（用于听牌提示 / 等待判定） */
 export function getWaits(tiles, meldCount, rules, maxTile = 47) {
+  const need = 4 - meldCount;
+  if (need < 0 || tiles.length !== need * 3 + 1) return [];
   const waits = [];
   const c = countsOf(tiles);
-  for (let t = 11; t <= 47; t++) {
-    if (!isValidTileForRules(t, rules)) continue;
-    if (c[t] >= 4) continue;
-    const next = tiles.concat(t);
-    if (isWinningHand(next, meldCount, rules)) waits.push(t);
+  const last = Math.min(47, maxTile);
+  for (let tile = 11; tile <= last; tile++) {
+    if (!isValidTileForRules(tile, rules) || c[tile] >= 4) continue;
+    c[tile]++;
+    if (isWinningHandCounts(c, meldCount, rules)) waits.push(tile);
+    c[tile]--;
   }
   return waits;
 }
@@ -298,7 +347,6 @@ function stdShantenCounts(c, fixedMelds) {
  * 向听数：-1 表示已胡，0 表示听牌
  * 对 14 张牌取打出某张后的最小值
  */
-const shantenCache = new Map();
 export function shanten(tiles, meldCount, rules) {
   let hand = tiles;
   if (hand.length % 3 === 2) {
@@ -317,9 +365,6 @@ export function shanten(tiles, meldCount, rules) {
   }
   const sorted = sortTiles(hand);
   const win = rules.win || rules;
-  const cacheKey = `${sorted.length}|${meldCount}|${win.allowSevenPairs ? 1 : 0}|${win.mustOpen ? 1 : 0}|${win.allowThirteenOrphans ? 1 : 0}|${sorted.join(',')}`;
-  const hit = shantenCache.get(cacheKey);
-  if (hit !== undefined) return hit;
   const c = countsOf(sorted);
   let best = stdShantenCounts(c, meldCount);
   if (meldCount === 0 && win.allowSevenPairs) {
@@ -329,8 +374,6 @@ export function shanten(tiles, meldCount, rules) {
     if (hand.length % 3 === 1) sh = Math.max(-1, sh);
     best = Math.min(best, sh);
   }
-  if (shantenCache.size > 60000) shantenCache.clear();
-  shantenCache.set(cacheKey, best);
   return best;
 }
 

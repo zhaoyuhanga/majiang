@@ -83,6 +83,87 @@ test('牌名', () => {
   assert.equal(tileName(45), '中');
 });
 
+function referenceMelds(c, need) {
+  if (need === 0) return c.every((count) => count === 0);
+  let tile = c.findIndex((count) => count > 0);
+  if (tile < 0) return false;
+  if (c[tile] >= 3) {
+    c[tile] -= 3;
+    const ok = referenceMelds(c, need - 1);
+    c[tile] += 3;
+    if (ok) return true;
+  }
+  if (tile >= 11 && tile <= 39 && tile % 10 <= 7 && c[tile + 1] > 0 && c[tile + 2] > 0) {
+    c[tile]--; c[tile + 1]--; c[tile + 2]--;
+    const ok = referenceMelds(c, need - 1);
+    c[tile]++; c[tile + 1]++; c[tile + 2]++;
+    if (ok) return true;
+  }
+  return false;
+}
+
+function referenceStandardWin(hand) {
+  const c = countsOf(hand);
+  if (c.some((count) => count > 4)) return false;
+  for (let pair = 11; pair <= 47; pair++) {
+    if (c[pair] < 2) continue;
+    c[pair] -= 2;
+    const ok = referenceMelds(c, 4);
+    c[pair] += 2;
+    if (ok) return true;
+  }
+  return false;
+}
+
+test('分组剪枝与朴素枚举结果一致且不修改输入', () => {
+  let seed = 0x6d616a69;
+  const random = (limit) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed % limit;
+  };
+  const wall = buildWall({ suits: [1, 2, 3], honors: true, copies: 4 });
+  const standardRules = { suits: [1, 2, 3], honors: true, allowSevenPairs: false };
+  const meldOptions = [];
+  for (const base of [10, 20, 30]) {
+    for (let rank = 1; rank <= 7; rank++) meldOptions.push([base + rank, base + rank + 1, base + rank + 2]);
+    for (let rank = 1; rank <= 9; rank++) meldOptions.push([base + rank, base + rank, base + rank]);
+  }
+  for (let honor = 41; honor <= 47; honor++) meldOptions.push([honor, honor, honor]);
+
+  for (let sample = 0; sample < 1200; sample++) {
+    let hand;
+    if (sample < 600) {
+      const c = new Array(48).fill(0);
+      for (let meld = 0; meld < 4; meld++) {
+        let options = meldOptions.filter((tiles) => tiles.every((tile) => c[tile] < 4));
+        const chosen = options[random(options.length)];
+        for (const tile of chosen) c[tile]++;
+      }
+      const pairs = [];
+      for (let tile = 11; tile <= 47; tile++) if (c[tile] > 0 && c[tile] <= 2) pairs.push(tile);
+      const pair = pairs[random(pairs.length)];
+      c[pair] += 2;
+      hand = [];
+      for (let tile = 11; tile <= 47; tile++) for (let i = 0; i < c[tile]; i++) hand.push(tile);
+    } else {
+      hand = Array.from({ length: 14 }, () => wall[random(wall.length)]);
+    }
+    const before = hand.slice();
+    assert.equal(isWinningHand(hand, 0, standardRules), referenceStandardWin(hand), `牌型不一致: ${hand.join(',')}`);
+    assert.deepEqual(hand, before);
+  }
+
+  const tenpai = [11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24];
+  const counts = countsOf(tenpai);
+  const expected = [];
+  for (let tile = 11; tile <= 47; tile++) {
+    if (counts[tile] >= 4) continue;
+    if (referenceStandardWin(tenpai.concat(tile))) expected.push(tile);
+  }
+  assert.deepEqual(getWaits(tenpai, 0, standardRules), expected);
+  assert.deepEqual(getWaits(tenpai, 0, standardRules, 23), expected.filter((tile) => tile <= 23));
+});
+
 test('向听性能', () => {
   const h = [11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 24];
   const t0 = performance.now();

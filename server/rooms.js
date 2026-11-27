@@ -1,9 +1,10 @@
 // 房间与对局生命周期管理
 import { Round } from './game.js';
-import { buildRoomRules, getPresets } from './rules.js';
+import { buildRoomRules, getPresets, getRule, normalizeRuleOptions } from './rules.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_CHAT = 40;
+const AUTO_CLOSE_MS = 30000;
 
 function randomCode(n = 5) {
   let s = '';
@@ -16,17 +17,19 @@ function cleanName(name) {
 }
 
 export function normalizeConfig(input = {}) {
+  const ruleSet = ['harbin', 'shuangyashan'].includes(input.ruleSet) ? input.ruleSet : 'harbin';
   const cfg = {
-    ruleSet: ['harbin', 'shuangyashan'].includes(input.ruleSet) ? input.ruleSet : 'harbin',
+    ruleSet,
     rounds: Math.max(1, Math.min(32, Number(input.rounds) || 8)),
     baseScore: Math.max(1, Math.min(10, Number(input.baseScore) || 1)),
     turnSeconds: Math.max(8, Math.min(60, Number(input.turnSeconds) || 20)),
     claimSeconds: Math.max(5, Math.min(30, Number(input.claimSeconds) || 12)),
-    cap: input.cap != null ? Math.max(8, Math.min(256, Number(input.cap) || 64)) : undefined,
+    cap: input.cap != null ? Math.max(8, Math.min(256, Number(input.cap) || getRule(ruleSet).scoring.cap)) : undefined,
     allowChi: input.allowChi !== false,
     allowMultiHu: !!input.allowMultiHu,
     autoFillBots: input.autoFillBots !== false,
     isPublic: input.isPublic !== false,
+    ruleOptions: normalizeRuleOptions(ruleSet, input.ruleOptions),
   };
   return cfg;
 }
@@ -63,6 +66,7 @@ export class Room {
     if (p) {
       p.socketId = socket.id;
       p.name = cleanName(name || p.name.replace('(托管)', ''));
+      p.features = socket.data.features || p.features || {};
       p.connected = true;
       p.bot = false;
       p.disconnectedAt = null;
@@ -73,55 +77,90 @@ export class Room {
         rp.name = p.name;
         rp.bot = false;
       }
+      this.noteHumanActivity();
       return p;
     }
     const isHost = id === this.hostId;
     p = {
       id, name: cleanName(name), socketId: socket.id, seat: null,
       connected: true, ready: false, bot: false, isHost,
+      features: socket.data.features || {},
       joinedAt: Date.now(), lastSeen: Date.now(),
     };
     this.members.set(id, p);
     this.spectators.add(id);
+    this.noteHumanActivity();
     return p;
+  }
+
+  hasConnectedHuman(seatedOnly = false) {
+    return [...this.members.values()].some((p) => !p.bot && p.connected && (!seatedOnly || p.seat != null));
+  }
+
+  noteHumanActivity() {
+    if (this.state === 'waiting' || this.state === 'finished' || this.hasConnectedHuman(true)) {
+      this.noActiveHumanAt = 0;
+    } else if (!this.noActiveHumanAt) {
+      this.noActiveHumanAt = Date.now();
+    }
+  }
+
+  takeoverSeat(seat, name) {
+    const id = `bot:takeover:${this.code}:${seat}:${Date.now().toString(36)}`;
+    const botName = `${String(name || '玩家').replace('(托管)', '')}(机器人)`;
+    this.seats[seat] = id;
+    this.members.set(id, {
+      id, name: botName, socketId: null, seat, connected: true,
+      ready: true, bot: true, isHost: false, features: {}, lastSeen: Date.now(),
+    });
+    if (this.round) {
+      const rp = this.round.players[seat];
+      rp.id = id;
+      rp.name = botName;
+      rp.bot = true;
+      rp.connected = true;
+      rp.canSwapDraw = false;
+      rp.drawSwapOpen = false;
+    }
+  }
+
+  close(reason = '房间已结束') {
+    if (this.state === 'closed') return;
+    this.state = 'closed';
+    this.closeReason = reason;
+    this.settingsLocked = true;
+    this.nextAt = 0;
+    this.round = null;
+    this.lastActivity = Date.now();
   }
 
   removeMember(id) {
     const p = this.members.get(id);
     if (!p) return;
-    if (p.seat != null) {
-      if (this.state === 'playing' || this.state === 'result') {
-        // 对局中离开：座位保留，转为托管人机
-        p.connected = false;
-        p.bot = true;
-        if (!p.name.endsWith('(托管)')) p.name += '(托管)';
-        if (this.round) {
-          const rp = this.round.players[p.seat];
-          rp.connected = false;
-          rp.bot = true;
-        }
-        if (p.isHost) {
-          const next = Array.from(this.members.values()).find((m) => !m.bot && m.id !== id);
-          if (next) { next.isHost = true; this.hostId = next.id; }
-        }
-        this.lastActivity = Date.now();
-        return;
-      }
-      this.seats[p.seat] = null;
-      if (this.round) {
-        const rp = this.round.players[p.seat];
-        rp.connected = false;
-        rp.bot = true;
-      }
-    }
+    const seat = p.seat;
+    const inGame = this.state === 'playing' || this.state === 'result';
     this.members.delete(id);
     this.spectators.delete(id);
-    if (p.isHost) {
-      const next = Array.from(this.members.values()).find((m) => !m.bot);
-      if (next) { next.isHost = true; this.hostId = next.id; }
-      else this.hostId = null;
+    if (seat != null) {
+      if (inGame) this.takeoverSeat(seat, p.name);
+      else this.seats[seat] = null;
+    }
+    if (p.isHost || id === this.hostId) {
+      const next = [...this.members.values()]
+        .filter((m) => !m.bot && m.connected)
+        .sort((a, b) => Number(b.seat != null) - Number(a.seat != null))[0];
+      if (next) {
+        next.isHost = true;
+        this.hostId = next.id;
+      } else {
+        this.hostId = null;
+      }
     }
     this.lastActivity = Date.now();
+    this.noteHumanActivity();
+    if ((inGame && !this.hasConnectedHuman(true)) || ((this.state === 'waiting' || this.state === 'finished') && !this.hasConnectedHuman())) {
+      this.close('玩家已离开，房间自动结束');
+    }
   }
 
   disconnected(id) {
@@ -133,7 +172,18 @@ export class Room {
     if (p.seat != null && this.round) {
       this.round.players[p.seat].connected = false;
     }
+    if (p.isHost || id === this.hostId) {
+      const next = [...this.members.values()]
+        .filter((m) => !m.bot && m.connected && m.id !== id)
+        .sort((a, b) => Number(b.seat != null) - Number(a.seat != null))[0];
+      if (next) {
+        p.isHost = false;
+        next.isHost = true;
+        this.hostId = next.id;
+      }
+    }
     this.lastActivity = Date.now();
+    this.noteHumanActivity();
   }
 
   getPlayer(id) { return this.members.get(id); }
@@ -150,6 +200,7 @@ export class Room {
     p.ready = false;
     this.seats[seat] = id;
     this.lastActivity = Date.now();
+    this.noteHumanActivity();
   }
 
   stand(id) {
@@ -203,7 +254,11 @@ export class Room {
   updateConfig(id, cfg) {
     if (id !== this.hostId) throw new Error('只有房主可以修改设置');
     if (this.state !== 'waiting') throw new Error('对局中不能修改设置');
-    this.config = normalizeConfig({ ...this.config, ...cfg });
+    this.config = normalizeConfig({
+      ...this.config,
+      ...cfg,
+      ruleOptions: { ...this.config.ruleOptions, ...(cfg.ruleOptions || {}) },
+    });
     this.rules = buildRoomRules({ ...this.config, options: this.config });
     this.totalRounds = this.rules.__config.rounds;
   }
@@ -213,15 +268,21 @@ export class Room {
     return this.state === 'waiting' && this.seats.every((s) => s);
   }
 
-  startGame(id) {
+  startGame(id, { allowBots = true } = {}) {
     if (this.state !== 'waiting') throw new Error('当前不能开始');
+    if (!this.hasConnectedHuman(true)) throw new Error('没有在线玩家，房间已结束');
     const host = this.members.get(this.hostId);
     if (id && id !== this.hostId && host && host.connected) throw new Error('只有房主可以开始游戏');
     const seatIds = this.seats.slice();
-    if (this.config.autoFillBots) {
+    if (this.config.autoFillBots && allowBots) {
       for (let i = 0; i < 4; i++) if (!seatIds[i]) { this.addBot(i); seatIds[i] = this.seats[i]; }
     }
     if (!seatIds.every(Boolean)) throw new Error('人数不够，请先补满 4 个座位（可添加人机）');
+    const unready = seatIds.filter((id) => {
+      const p = this.members.get(id);
+      return p && !p.bot && id !== this.hostId && !p.ready;
+    });
+    if (unready.length) throw new Error(`还有 ${unready.length} 位玩家未准备`);
     this.scores = [0, 0, 0, 0];
     this.dealer = Math.floor(Math.random() * 4);
     this.roundNo = 0;
@@ -241,6 +302,7 @@ export class Room {
         name: p ? p.name : '玩家',
         bot: p ? !!p.bot || !p.connected : true,
         connected: p ? p.connected : false,
+        canSwapDraw: !!p?.features?.canSwapDraw,
       };
     });
     this.round = new Round({
@@ -267,6 +329,7 @@ export class Room {
   }
 
   continueRound(id) {
+    if (!this.hasConnectedHuman(true)) throw new Error('没有在线玩家，房间已结束');
     if (this.state === 'result') {
       this.nextAt = Math.min(this.nextAt, Date.now() + 800);
       this.autoNext = true;
@@ -276,7 +339,7 @@ export class Room {
   }
 
   nextRound() {
-    if (this.state !== 'result') return;
+    if (this.state !== 'result' || !this.hasConnectedHuman(true)) return;
     if (this.roundNo >= this.totalRounds) {
       this.state = 'finished';
       this.settingsLocked = false;
@@ -312,6 +375,10 @@ export class Room {
     const p = this.members.get(id);
     if (!p || p.seat == null) throw new Error('你不在座位上');
     this.lastActivity = Date.now();
+    if (p.seat != null && this.round) this.round.players[p.seat].canSwapDraw = !!p.features?.canSwapDraw;
+    if ((action?.type === 'revealDraw' || action?.type === 'swapDraw') && !this.round.canSwapDraw(p.seat)) {
+      throw new Error('当前没有可用的摸牌换牌权限');
+    }
     return this.round.act(p.seat, action);
   }
 
@@ -328,7 +395,14 @@ export class Room {
   }
 
   tick() {
+    if (this.state === 'closed') return;
     const now = Date.now();
+    this.noteHumanActivity();
+    if ((this.state === 'playing' || this.state === 'result') && this.noActiveHumanAt && now - this.noActiveHumanAt >= AUTO_CLOSE_MS) {
+      this.close('长时间无人在线，房间已自动结束');
+      this.broadcast();
+      return;
+    }
     // 断线 8 秒后转托管
     if (this.state === 'playing' && this.round) {
       for (const p of this.members.values()) {
@@ -355,7 +429,7 @@ export class Room {
         this.broadcast();
       }
     } else if (this.state === 'result') {
-      if (Date.now() >= this.nextAt) {
+      if (this.hasConnectedHuman(true) && Date.now() >= this.nextAt) {
         this.nextRound();
         this.broadcast();
       }
@@ -370,7 +444,7 @@ export class Room {
       ruleName: this.rules.name,
       state: this.state,
       players: this.members.size,
-      humans: Array.from(this.members.values()).filter((m) => !m.bot).length,
+      humans: [...this.members.values()].filter((m) => !m.bot && m.connected).length,
       occupied: this.seats.filter(Boolean).length,
       rounds: this.config.rounds,
       roundNo: this.roundNo,
@@ -387,37 +461,41 @@ export class Room {
       if (!sid) return null;
       const p = this.members.get(sid);
       return {
-        id: sid,
         name: p ? p.name : '?',
         bot: p ? !!p.bot : true,
         connected: p ? p.connected : false,
         ready: p ? p.ready : false,
         isHost: sid === this.hostId,
+        vip: !!p?.features?.vip,
+        canSwapDraw: !!p?.features?.canSwapDraw,
       };
     });
     return {
       code: this.code,
       state: this.state,
-      hostId: this.hostId,
       config: this.config,
       rules: {
         id: this.rules.id, name: this.rules.name, tagline: this.rules.tagline,
         description: this.rules.description,
         allowChi: this.rules.allowChi, allowMultiHu: this.rules.allowMultiHu,
+        allowDiscardAfterTing: this.rules.allowDiscardAfterTing,
         requireTing: this.rules.win.requireTing, bao: !!this.rules.bao?.enabled,
         cap: this.rules.scoring.cap,
+        ruleOptions: { ...this.rules.ruleOptions },
       },
       seats: seated,
       mySeat: seat,
       myReady: me ? me.ready : false,
       isHost: id === this.hostId,
+      myFeatures: { ...(me?.features || {}) },
+      canDissolve: id === this.hostId || !!me?.features?.canDissolveRooms,
       roundNo: this.roundNo,
       totalRounds: this.totalRounds,
       dealer: this.dealer,
       scores: this.scores,
       game: this.round ? this.round.snapshot(seat) : null,
       result: this.result,
-      chat: this.chat.slice(-30),
+      chat: this.chat.slice(-30).map(({ name, text, at }) => ({ name, text, at })),
       spectators: Array.from(this.members.values()).filter((m) => m.seat == null).length,
       nextAt: this.nextAt || 0,
       serverNow: Date.now(),
@@ -428,7 +506,9 @@ export class Room {
     if (!this.io) return;
     for (const p of this.members.values()) {
       if (!p.socketId) continue;
-      this.io.to(p.socketId).emit('room:state', this.snapshotFor(p.id));
+      const socket = this.io.sockets.sockets.get(p.socketId);
+      if (!socket?.connected || socket.data.clientId !== p.id) continue;
+      socket.emit('room:state', this.snapshotFor(p.id));
     }
   }
 }
@@ -439,6 +519,13 @@ export class RoomManager {
     this.rooms = new Map();
     this.timer = setInterval(() => this.tick(), 250);
     this.cleanupTimer = setInterval(() => this.cleanup(), 60000);
+    this.timer.unref();
+    this.cleanupTimer.unref();
+  }
+
+  dispose() {
+    clearInterval(this.timer);
+    clearInterval(this.cleanupTimer);
   }
 
   create(hostId, config) {
@@ -462,16 +549,54 @@ export class RoomManager {
       .map((r) => r.summarize());
   }
 
+  listAll(limit = 200) {
+    return Array.from(this.rooms.values())
+      .sort((a, b) => b.lastActivity - a.lastActivity)
+      .slice(0, limit)
+      .map((room) => ({ ...room.summarize(), hostId: room.hostId }));
+  }
+
+  destroy(code, reason = '房间已解散') {
+    const room = this.get(code);
+    if (!room) return false;
+    room.close(reason);
+    for (const p of room.members.values()) {
+      const socket = p.socketId ? this.io.sockets.sockets.get(p.socketId) : null;
+      if (socket?.connected && socket.data.clientId === p.id) {
+        socket.data.joinedRoom = null;
+        socket.emit('room:closed', { code: room.code, reason });
+      }
+    }
+    this.rooms.delete(room.code);
+    return true;
+  }
+
+  refreshUser(id, user) {
+    if (!user) return;
+    for (const room of this.rooms.values()) {
+      const member = room.members.get(id);
+      if (!member) continue;
+      member.features = { ...user.features };
+      const player = member.seat != null ? room.round?.players[member.seat] : null;
+      if (player) player.canSwapDraw = !!user.features.canSwapDraw;
+      if (player && !player.canSwapDraw) player.drawSwapOpen = false;
+      room.broadcast();
+    }
+  }
+
   tick() {
-    for (const room of this.rooms.values()) room.tick();
+    for (const room of this.rooms.values()) {
+      room.tick();
+      if (room.state === 'closed') this.destroy(room.code, room.closeReason);
+    }
   }
 
   cleanup() {
     const now = Date.now();
     for (const [code, room] of this.rooms) {
-      const humans = Array.from(room.members.values()).filter((m) => !m.bot && m.connected);
+      const humans = [...room.members.values()].filter((m) => !m.bot && m.connected);
       if (humans.length === 0 && now - room.lastActivity > 10 * 60 * 1000) {
-        this.rooms.delete(code);
+        this.destroy(code, '房间长时间无人，已自动清理');
       }
     }
   }
