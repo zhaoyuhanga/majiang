@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRoomRules, analyzeWin, getTingInfo } from '../server/rules.js';
+import { buildRoomRules, analyzeWin, getTingInfo, getPresets } from '../server/rules.js';
 import { scoreRound } from '../server/scoring.js';
 import { Room, normalizeConfig } from '../server/rooms.js';
 
@@ -12,6 +12,20 @@ const harbinMelds = [
 function roomRules(ruleSet, ruleOptions = {}, options = {}) {
   return buildRoomRules({ ruleSet, ruleOptions, options });
 }
+
+test('规则配置只暴露已实现且可用的选项', () => {
+  const removedKeys = [
+    'lianZhuangSuanJu', 'zhouYiZhang', 'allowTwoSuits', 'liangMen', 'fourMen',
+    'duiHaiYang', 'chiPengOceanScore', 'kaiPaiZha', 'kanDuiBao', 'siKaSuanFen',
+    'daiKe', 'qiDuiDaiNian', 'shangGunBao', 'sanKan',
+  ];
+  for (const preset of getPresets()) {
+    assert.ok(preset.optionSchema.length > 0);
+    assert.equal(preset.optionSchema.some((item) => item.available === false || item.reason), false);
+    assert.equal(preset.optionSchema.some((item) => removedKeys.includes(item.key)), false);
+    assert.equal(preset.optionSchema.some((item) => item.group === '地方变体'), false);
+  }
+});
 
 test('房间规则：白名单归一化、默认封顶与局部更新', () => {
   const config = normalizeConfig({

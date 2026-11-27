@@ -20,7 +20,7 @@ const WIN_DEFAULTS = {
 };
 
 const option = (key, label, group, defaultValue, help, extra = {}) => ({
-  key, label, group, type: 'boolean', default: defaultValue, available: true, help, ...extra,
+  key, label, group, type: 'boolean', default: defaultValue, help, ...extra,
 });
 
 export const RULE_OPTION_SCHEMA = {
@@ -30,14 +30,6 @@ export const RULE_OPTION_SCHEMA = {
     option('shouBaYiSwap', '手把一可换牌', '胡牌', false, '本房规：仅剩 2 张暗牌时，本次摸牌可查看牌墙种类并更换一次。'),
     option('pureKan', '纯夹（只胡一张牌）', '胡牌', false, '只听一张牌时才能胡。'),
     option('buJiaBuHu', '不夹不胡', '胡牌', false, '只能胡唯一夹张，边张和单吊不能胡。'),
-    option('lianZhuangSuanJu', '连庄算局', '地方变体', false, '连庄局的计数方式缺少统一口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('zhouYiZhang', '周一张', '地方变体', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('allowTwoSuits', '两色可胡', '地方变体', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('liangMen', '两闷', '地方变体', false, '闷数的计分公式存在平台冲突，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('fourMen', '四闷', '地方变体', false, '闷数的计分公式存在平台冲突，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('duiHaiYang', '对海洋', '地方变体', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('chiPengOceanScore', '吃碰算海洋分', '地方变体', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('kaiPaiZha', '开牌炸', '地方变体', false, '四张同牌与天胡两种口径冲突，暂不开放。', { available: false, reason: '规则口径待确认' }),
   ],
   harbin: [
     option('scene', '玩法场', '计分', 'classic', '经典场 ×1，传统场 ×2，高分场 ×4；房间封顶仍优先生效。', {
@@ -60,20 +52,12 @@ export const RULE_OPTION_SCHEMA = {
     option('hongZhongBuDingDaCha', '红中不顶大叉', '胡牌', false, '红中刻子不计入“有刻有顺”的刻子要求。'),
     option('qingYiSe', '清一色', '胡牌', false, '允许清一色胡牌，覆盖至少两门的限制。'),
     option('siKa', '死卡', '胡牌', false, '只能胡唯一夹张，边张和单吊不能胡。'),
-    option('kanDuiBao', '坎对宝', '宝牌', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('siKaSuanFen', '死卡算分', '地方变体', false, '独立番率及组合语义未证实，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('daiKe', '带壳', '地方变体', false, '“壳”的牌墙构成与替代规则口径待确认，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('qiDuiDaiNian', '七对带粘', '地方变体', false, '仅找到邻近地区旁证，最终结构未确认，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('shangGunBao', '上滚宝', '地方变体', false, '公开资料仅有近似玩法，命名与翻宝方式未确认，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('sanKan', '三坎', '地方变体', false, '该变体缺少统一公开口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
-    option('lianZhuangSuanJu', '连庄算局', '地方变体', false, '连庄局的计数方式缺少统一口径，暂不开放。', { available: false, reason: '规则口径待确认' }),
   ],
 };
 
 export function normalizeRuleOptions(ruleSet, input = {}) {
   const out = {};
   for (const item of RULE_OPTION_SCHEMA[ruleSet] || []) {
-    if (!item.available) continue;
     const value = input?.[item.key];
     if (item.type === 'select') {
       out[item.key] = item.values.some((v) => v.value === value) ? value : item.default;

@@ -69,7 +69,7 @@ function esc(s) {
 
 // ---------------- 牌面 ----------------
 const TILE_NUMERALS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
-const TILE_VERSION = '1.6.0';
+const TILE_VERSION = '1.7.0';
 
 function tileInfo(t) {
   if (t == null) return null;
@@ -413,7 +413,7 @@ function renderRules() {
   const preset = presetById(state.config.ruleSet);
   const summary = $('#playSummary');
   if (preset && summary) {
-    const enabled = (preset.optionSchema || []).filter((item) => item.available && item.type === 'boolean' && state.config.ruleOptions[item.key]);
+    const enabled = (preset.optionSchema || []).filter((item) => item.type === 'boolean' && state.config.ruleOptions[item.key]);
     summary.innerHTML = `<div><strong>${esc(preset.name)}</strong><span>4 人 · ${state.config.rounds} 局 · 底分 ${state.config.baseScore}</span></div>
       <div class="ps-tags">${enabled.slice(0, 4).map((item) => `<i>${esc(item.label)}</i>`).join('')}<i>自定义规则</i></div>`;
   }
@@ -1251,13 +1251,13 @@ function showRuleBuilder(mode) {
             <span>${esc(item.name)}</span><small>${esc(item.tagline)}</small>
           </button>`).join('')}
         </div>
-        <div class="rb-side-note">规则保存后由服务端统一校验。标注“待确认”的地方变体暂不开放。</div>
+        <div class="rb-side-note">仅展示已实现并参与服务端判定的规则，保存后统一校验生效。</div>
       </aside>
       <main class="rb-main">
         <section class="rb-section rb-basics">
           <div class="rb-section-head"><div><h3>基础设置</h3><p>${esc(preset.description)}</p></div><span class="rb-badge">4 人玩法</span></div>
           <div class="rb-number-picker" role="group" aria-label="玩家人数">
-            ${[2, 3, 4].map((count) => `<button type="button" class="${count === 4 ? 'active' : ''}"${count === 4 ? '' : ' disabled'} title="${count === 4 ? '当前版本开放四人对局' : '暂仅支持四人对局'}"><strong>${count} 人</strong><small>${count === 4 ? '已开放' : '待支持'}</small></button>`).join('')}
+            <button type="button" class="active"><strong>4 人</strong><small>经典四人局</small></button>
           </div>
           <div class="rb-field-grid">
             ${builderSelect('rounds', '局数', [1, 2, 4, 8, 16, 32], draft.rounds, ' 局')}
@@ -1276,10 +1276,10 @@ function showRuleBuilder(mode) {
         </section>
         <div class="rb-groups">
           ${groups.map((group) => `<section class="rb-rule-group" data-rule-group="${esc(group)}">
-            <div class="rb-group-head"><h3>${esc(group)}</h3><span>${(preset.optionSchema || []).filter((item) => item.group === group && item.available && item.type === 'boolean' && draft.ruleOptions[item.key]).length} 项启用</span></div>
-            ${(preset.optionSchema || []).filter((item) => item.group === group && item.type === 'boolean').map((item) => `<label class="rb-option${item.available ? '' : ' disabled'}">
-              <span class="rb-option-copy"><span class="rb-option-title">${esc(item.label)}${item.available ? '' : '<em>待确认</em>'}</span><small>${esc(item.help || item.reason || '')}</small></span>
-              <input type="checkbox" data-rule-key="${esc(item.key)}"${item.available && draft.ruleOptions[item.key] ? ' checked' : ''}${item.available ? '' : ' disabled'}>
+            <div class="rb-group-head"><h3>${esc(group)}</h3><span>${(preset.optionSchema || []).filter((item) => item.group === group && item.type === 'boolean' && draft.ruleOptions[item.key]).length} 项启用</span></div>
+            ${(preset.optionSchema || []).filter((item) => item.group === group && item.type === 'boolean').map((item) => `<label class="rb-option">
+              <span class="rb-option-copy"><span class="rb-option-title">${esc(item.label)}</span><small>${esc(item.help || '')}</small></span>
+              <input type="checkbox" data-rule-key="${esc(item.key)}"${draft.ruleOptions[item.key] ? ' checked' : ''}>
             </label>`).join('')}
           </section>`).join('')}
         </div>
@@ -1321,7 +1321,7 @@ function showRuleBuilder(mode) {
   };
   const updateSummary = () => {
     const preset = presetById(draft.ruleSet);
-    const enabled = (preset.optionSchema || []).filter((item) => item.available && item.type === 'boolean' && draft.ruleOptions[item.key]);
+    const enabled = (preset.optionSchema || []).filter((item) => item.type === 'boolean' && draft.ruleOptions[item.key]);
     $('#builderSummary').innerHTML = `<strong>${esc(preset.name)}</strong><span>${draft.rounds} 局 · 底分 ${draft.baseScore} · ${enabled.length} 项规则</span>`;
   };
   const resetDefaults = () => {
@@ -1516,7 +1516,7 @@ function renderAdminPanel(panel) {
 
 function activeRoomRules(rules, preset) {
   const options = rules?.ruleOptions || {};
-  const active = (preset?.optionSchema || []).filter((item) => item.available && (
+  const active = (preset?.optionSchema || []).filter((item) => (
     item.type === 'select'
       ? item.values.some((value) => value.value === options[item.key])
       : options[item.key]

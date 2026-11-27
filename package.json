@@ -1,9 +1,9 @@
 {
   "name": "majiang-online",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "联机麻将：哈尔滨麻将 / 双鸭山麻将（牌面与交互升级版）",
+  "description": "联机麻将：哈尔滨麻将 / 双鸭山麻将（规则配置与视觉升级版）",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

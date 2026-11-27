@@ -58,7 +58,7 @@ try {
     ...Array.from({ length: 8 }, (_, index) => 51 + index),
   ];
   const tileHrefs = await page.$$eval('#tileSprite image', (nodes) => nodes.map((node) => node.getAttribute('href')));
-  assert.deepEqual(tileHrefs, tileCodes.map((tile) => `/images/tiles/${tile}.png?v=1.6.0`));
+  assert.deepEqual(tileHrefs, tileCodes.map((tile) => `/images/tiles/${tile}.png?v=1.7.0`));
   assert.ok(await page.$$eval('#tileSprite image', (nodes) => nodes.every((node) => node.getAttribute('width') === '48' && node.getAttribute('height') === '64')));
   const assetStatus = await page.evaluate(async () => Promise.all(
     [...document.querySelectorAll('#tileSprite image')].map(async (node) => {
@@ -87,7 +87,7 @@ try {
   await gallery.screenshot({ path: 'shot-ui-tile-gallery.png' });
   await gallery.evaluate((element) => element.remove());
 
-  assert.equal((await page.$eval('#adminBtn', (node) => node.textContent)).trim(), 'v1.6.0');
+  assert.equal((await page.$eval('#adminBtn', (node) => node.textContent)).trim(), 'v1.7.0');
   assert.equal(await page.$eval('#adminBtn', (node) => node.textContent.includes('管理')), false);
   if (!process.env.BASE) {
     await page.keyboard.down('Control');
@@ -122,8 +122,9 @@ try {
   assert.equal(await page.$eval('[data-config="autoFillBots"]', (node) => node.checked), false);
   await page.click('[data-config="autoFillBots"]');
   assert.equal(await page.$eval('[data-builder-rule="harbin"]', (node) => node.getAttribute('aria-pressed')), 'true');
-  assert.ok(await page.$$eval('.rb-option input:disabled', (nodes) => nodes.length) > 0);
-  assert.equal(await page.$$eval('.rb-number-picker button:disabled', (nodes) => nodes.length), 2);
+  assert.equal(await page.$$eval('.rb-option input:disabled', (nodes) => nodes.length), 0);
+  assert.equal(await page.$$eval('.rb-option', (nodes) => nodes.some((node) => node.textContent.includes('待确认') || node.textContent.includes('地方变体'))), false);
+  assert.equal(await page.$$eval('.rb-number-picker button', (nodes) => nodes.length), 1);
   await page.select('[data-setting="turnSeconds"]', '12');
   await page.click('[data-builder-rule="harbin"]');
   assert.equal(await page.$$eval('[data-setting="scene"] option', (nodes) => nodes.length), 3);
